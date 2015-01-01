@@ -353,6 +353,105 @@ class Screenshot:
     # s_overall = int(s * 100 / i)
     return self.most_used_spectrum(spectrum, saturation, value, size, overall_value)
 
+  def spectrum_hsv_zones(self, pixels, width, height, zonewidth):
+    spectrum_left = {}
+    saturation_left = {}
+    value_left = {}
+    spectrum_right = {}
+    saturation_right = {}
+    value_right = {}
+
+    size = int(len(pixels)/4)
+    size_left = size_right = int(zonewidth*height)
+    pixel = 0
+
+    i = 0
+    nbleft = 0
+    nbright = 0
+    s_left, v_left = 0, 0
+    s_right, v_right = 0, 0
+    r, g, b = 0, 0, 0
+    tmph_left, tmps_left, tmpv_left = 0, 0, 0
+    tmph_right, tmps_right, tmpv_right = 0, 0, 0
+    curwidth = 0
+
+    for i in range(size):
+      if curwidth < zonewidth:
+        #In the left zone
+        if fmtRGBA:
+          r = pixels[pixel]
+          g = pixels[pixel + 1]
+          b = pixels[pixel + 2]
+        else: #probably BGRA
+          b = pixels[pixel]
+          g = pixels[pixel + 1]
+          r = pixels[pixel + 2]
+        pixel += 4
+
+        tmph_left, tmps_left, tmpv_left = colorsys.rgb_to_hsv(float(r/255.0), float(g/255.0), float(b/255.0))
+        s_left += tmps_left
+        v_left += tmpv_left
+        # skip low value_left and saturation_left
+        if tmpv_left > 0.25:
+          if tmps_left > 0.33:
+            h = int(tmph_left * 360)
+            # logger.debuglog("%s \t set pixel r %s \tg %s \tb %s" % (i, r, g, b))
+            # logger.debuglog("%s \t set pixel h %s \ts %s \tv %s" % (i, tmph_left*100, tmps_left*100, tmpv_left*100))
+          if spectrum_left.has_key(h):
+            spectrum_left[h] += 1 # tmps_left * 2 * tmpv_left
+            saturation_left[h] = (saturation_left[h] + tmps_left)/2
+            value_left[h] = (value_left[h] + tmpv_left)/2
+          else:
+            spectrum_left[h] = 1 # tmps_left * 2 * tmpv_left
+            saturation_left[h] = tmps_left
+            value_left[h] = tmpv_left
+        nbleft += 1
+
+      elif curwidth > width-zonewidth:
+        #In the right zone
+        if fmtRGBA:
+          r = pixels[pixel]
+          g = pixels[pixel + 1]
+          b = pixels[pixel + 2]
+        else: #probably BGRA
+          b = pixels[pixel]
+          g = pixels[pixel + 1]
+          r = pixels[pixel + 2]
+        pixel += 4
+        
+        tmph_right, tmps_right, tmpv_right = colorsys.rgb_to_hsv(float(r/255.0), float(g/255.0), float(b/255.0))
+        s_right += tmps_right
+        v_right += tmpv_right
+        # skip low value_right and saturation_right
+        if tmpv_right > 0.25:
+          if tmps_right > 0.33:
+            h = int(tmph_right * 360)
+            # logger.debuglog("%s \t set pixel r %s \tg %s \tb %s" % (i, r, g, b))
+            # logger.debuglog("%s \t set pixel h %s \ts %s \tv %s" % (i, tmph_right*100, tmps_right*100, tmpv_right*100))
+          if spectrum_right.has_key(h):
+            spectrum_right[h] += 1 # tmps_right * 2 * tmpv_right
+            saturation_right[h] = (saturation_right[h] + tmps_right)/2
+            value_right[h] = (value_right[h] + tmpv_right)/2
+          else:
+            spectrum_right[h] = 1 # tmps_right * 2 * tmpv_right
+            saturation_right[h] = tmps_right
+            value_right[h] = tmpv_right
+        nbright += 1
+
+
+      curwidth += 1
+      if curwidth > width:
+        curwidth = 0
+        
+
+    overall_value_left = v_left / float(nbleft)
+    overall_value_right = v_right / float(nbright)
+    hsvratio = {} 
+    hsvratio['left'] = self.most_used_spectrum(spectrum_left, saturation_left, value_left, size_left, overall_value_left)
+    hsvratio['right'] = self.most_used_spectrum(spectrum_right, saturation_right, value_right, size_right, overall_value_right)
+    return hsvratio 
+
+
 def run():
   player = None
   last = datetime.datetime.now()
@@ -364,7 +463,7 @@ def run():
         logger.debuglog("creating instance of player")
         player = MyPlayer()
       xbmc.sleep(500)
-    if hue.settings.mode == 0: # ambilight mode
+    if hue.settings.mode == 0 or hue.settings.mode == 2 : # ambilight mode or ambilight zones modes
       if hue.settings.ambilight_dim and hue.dim_group == None:
         logger.debuglog("creating group to dim")
         tmp = hue.settings
@@ -380,17 +479,22 @@ def run():
       if capture.getCaptureState() == xbmc.CAPTURE_STATE_DONE:
         if player.playingvideo:
           screen = Screenshot(capture.getImage(), capture.getWidth(), capture.getHeight())
-          hsvRatios = screen.spectrum_hsv(screen.pixels, screen.capture_width, screen.capture_height)
-          if hue.settings.light == 0:
-            fade_light_hsv(hue.light, hsvRatios[0])
+          if hue.settings.mode == 2:
+            hsvRatios = screen.spectrum_hsv_zones(screen.pixels, screen.capture_width, screen.capture_height, 20)
+            fade_light_hsv(Light(hue.settings.lightleft_id, hue.settings), hsvRatios['left'][0])
+            fade_light_hsv(Light(hue.settings.lightright_id, hue.settings), hsvRatios['right'][0])
           else:
-            fade_light_hsv(hue.light[0], hsvRatios[0])
-            if hue.settings.light > 1:
-              xbmc.sleep(4)
-              fade_light_hsv(hue.light[1], hsvRatios[1])
-            if hue.settings.light > 2:
-              xbmc.sleep(4)
-              fade_light_hsv(hue.light[2], hsvRatios[2])
+            hsvRatios = screen.spectrum_hsv(screen.pixels, screen.capture_width, screen.capture_height)
+            if hue.settings.light == 0:
+              fade_light_hsv(hue.light, hsvRatios[0])
+            else:
+              fade_light_hsv(hue.light[0], hsvRatios[0])
+              if hue.settings.light > 1:
+                xbmc.sleep(4)
+                fade_light_hsv(hue.light[1], hsvRatios[1])
+              if hue.settings.light > 2:
+                xbmc.sleep(4)
+                fade_light_hsv(hue.light[2], hsvRatios[2])
 
 def fade_light_hsv(light, hsvRatio):
   fullSpectrum = light.fullSpectrum
